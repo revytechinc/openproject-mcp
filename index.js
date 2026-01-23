@@ -7,7 +7,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
-const BASE_URL = process.env.OPENPROJECT_URL || "https://openproject.cyber.ai.vn";
+const BASE_URL = process.env.OPENPROJECT_URL || "https://your-openproject-instance.com";
 const API_KEY = process.env.OPENPROJECT_API_KEY || "";
 
 const server = new Server(
@@ -118,13 +118,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          projectId: { type: "string", description: "Project ID or slug", default: "quan-ly-van-ban-hai-quan" },
+          projectId: { type: "string", description: "Project ID or slug" },
           subject: { type: "string", description: "Work package title/subject" },
           description: { type: "string", description: "Work package description" },
           typeId: { type: "number", description: "Type ID (1=Task, 4=Feature, 5=Bug)", default: 1 },
           parentId: { type: "number", description: "Parent work package ID" },
           assigneeId: { type: "number", description: "Assignee user ID" },
-          versionId: { type: "number", description: "Sprint/Version ID (22=Sprint 9, 23=Sprint 10)" },
+          versionId: { type: "number", description: "Sprint/Version ID" },
           startDate: { type: "string", description: "Start date (YYYY-MM-DD)" },
           dueDate: { type: "string", description: "Due date (YYYY-MM-DD)" }
         },
@@ -142,7 +142,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           description: { type: "string", description: "New description" },
           statusId: { type: "number", description: "New status ID" },
           assigneeId: { type: "number", description: "New assignee ID" },
-          versionId: { type: "number", description: "Sprint/Version ID (22=Sprint 9, 23=Sprint 10)" },
+          versionId: { type: "number", description: "Sprint/Version ID" },
           estimatedTime: { type: "string", description: "Estimated time in ISO 8601 duration format (e.g., PT2H for 2 hours, PT30M for 30 minutes)" }
         },
         required: ["id"]
@@ -325,7 +325,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "create_work_package": {
-        var projectId = args.projectId || "quan-ly-van-ban-hai-quan";
+        if (!args.projectId) {
+          throw new Error("projectId is required");
+        }
+        var projectId = args.projectId;
         var createBody = {
           subject: args.subject,
           _links: {
