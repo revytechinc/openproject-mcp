@@ -1,0 +1,42 @@
+{
+    "name": "openproject-mcp",
+    "version": "1.0.0",
+    "description": "MCP server for OpenProject API integration",
+    "type": "module",
+    "main": "index.js",
+    "bin": {
+        "openproject-mcp": "index.js"
+    },
+    "scripts": {
+        "start": "node index.js"
+    },
+    "keywords": [
+        "mcp",
+        "model-context-protocol",
+        "openproject",
+        "project-management",
+        "api",
+        "mcp-server"
+    ],
+    "author": "cyborgx0x <leeboykt@gmail.com>",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/cyborgx0x/mcp-openproject.git"
+    },
+    "bugs": {
+        "url": "https://github.com/cyborgx0x/mcp-openproject/issues"
+    },
+    "homepage": "https://github.com/cyborgx0x/mcp-openproject#readme",
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.0.0"
+    },
+    "files": [
+        "index.js",
+        "README.md",
+        "LICENSE"
+    ]
+}
