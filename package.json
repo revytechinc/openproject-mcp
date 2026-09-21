@@ -1,14 +1,16 @@
 {
     "name": "openproject-mcp",
-    "version": "1.0.0",
-    "description": "MCP server for OpenProject API integration",
+    "version": "1.1.0",
+    "description": "MCP server for OpenProject API integration, including CloudBSD status.cloudbsd.org write tools",
     "type": "module",
     "main": "index.js",
     "bin": {
         "openproject-mcp": "index.js"
     },
     "scripts": {
-        "start": "node index.js"
+        "start": "node index.js",
+        "test": "node --test test/*.test.js",
+        "prove": "node --test test/*.test.js"
     },
     "keywords": [
         "mcp",
@@ -16,18 +18,19 @@
         "openproject",
         "project-management",
         "api",
-        "mcp-server"
+        "mcp-server",
+        "cloudbsd"
     ],
     "author": "cyborgx0x <leeboykt@gmail.com>",
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/cyborgx0x/mcp-openproject.git"
+        "url": "git+https://github.com/revytechinc/openproject-mcp.git"
     },
     "bugs": {
-        "url": "https://github.com/cyborgx0x/mcp-openproject/issues"
+        "url": "https://github.com/revytechinc/openproject-mcp/issues"
     },
-    "homepage": "https://github.com/cyborgx0x/mcp-openproject#readme",
+    "homepage": "https://github.com/revytechinc/openproject-mcp#readme",
     "engines": {
         "node": ">=18.0.0"
     },
@@ -36,6 +39,7 @@
     },
     "files": [
         "index.js",
+        "lib",
         "README.md",
         "LICENSE"
     ]

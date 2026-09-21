@@ -2,6 +2,8 @@
 
 Model Context Protocol (MCP) server for OpenProject API integration. Enables AI assistants to interact with OpenProject work packages, projects, and time tracking.
 
+This CloudBSD fork adds first-class write tools for [status.cloudbsd.org](https://status.cloudbsd.org) against OpenProject API v3.
+
 ## Installation
 
 ### Global Installation (Recommended)
@@ -60,6 +62,16 @@ Or if installed globally:
 }
 ```
 
+## CloudBSD status.cloudbsd.org write path
+
+`status_upsert`, `build_annotate`, and `relation_upsert` write CloudBSD status work packages used by status.cloudbsd.org.
+
+**Write target is DEV / trackdev.** Point `OPENPROJECT_URL` at the CloudBSD trackdev OpenProject instance. Do not enable or document production track as the default MCP write path. There is no parallel status-mcp source of truth; these tools live in this server.
+
+Env stays `OPENPROJECT_URL` + `OPENPROJECT_API_KEY`.
+
+The CloudBSD project identifier is `cloudbsd`. Components/lanes are first-class peers: `Desktop`, `HackMiami`, `Server`, `Wayfire`, `Ports-InternalPkg`, `Product-Media`, `CI-Jenkins`, `Networking`, `Status`. Node-map edges use native OpenProject relations (`relates`, `blocks`, `precedes`) rather than custom graph fields.
+
 ## Available Tools
 
 | Tool | Description |
@@ -75,6 +87,9 @@ Or if installed globally:
 | `update_work_package` | Update an existing work package |
 | `log_time` | Log time entry for a work package |
 | `raw_api_call` | Make a raw API call to any endpoint |
+| `status_upsert` | Create or update a CloudBSD status work package by component/lane |
+| `build_annotate` | Attach or update Jenkins build annotation custom fields on a work package |
+| `relation_upsert` | Create or ensure a native OpenProject relation (idempotent) |
 
 ## Usage Examples
 
@@ -123,17 +138,59 @@ log_time({
 })
 ```
 
+### Upsert a CloudBSD status lane
+
+```javascript
+status_upsert({
+  component: "Server",
+  done: ["bhyve guest boots"],
+  next: "wire status portal",
+  direction: "keep Server first-class"
+})
+```
+
+`lane` is accepted as an alias for `component`. Optional `jenkins_job`, `jenkins_number`, and `jenkins_url` custom fields can be set on the same call.
+
+### Annotate a Jenkins build
+
+```javascript
+build_annotate({
+  workPackageId: 41,
+  jenkins_job: "cloudbsd-iso",
+  jenkins_number: 18,
+  jenkins_url: "https://ci.example.invalid/job/cloudbsd-iso/18/"
+})
+```
+
+### Ensure a node-map relation
+
+```javascript
+relation_upsert({
+  fromId: 11,
+  toId: 22,
+  type: "relates_to"
+})
+```
+
+`relates_to` is stored as native OpenProject `relates`. `blocks` and `precedes` are also accepted. Repeating the same edge returns the existing relation.
+
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OPENPROJECT_URL` | Yes | Your OpenProject instance URL |
+| `OPENPROJECT_URL` | Yes | OpenProject instance URL. For CloudBSD status writes, use trackdev (DEV). |
 | `OPENPROJECT_API_KEY` | Yes | API key from OpenProject |
 
 ## Requirements
 
 - Node.js >= 18.0.0
 - OpenProject instance with API access
+
+## Tests
+
+```bash
+npm test
+```
 
 ## License
 

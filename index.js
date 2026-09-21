@@ -6,42 +6,23 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { createApi } from "./lib/api.js";
+import {
+  CLOUDBSD_STATUS_TOOLS,
+  handleCloudbsdStatusTool,
+} from "./lib/cloudbsd-status.js";
 
 const BASE_URL = process.env.OPENPROJECT_URL || "https://your-openproject-instance.com";
 const API_KEY = process.env.OPENPROJECT_API_KEY || "";
+const { request: apiRequest } = createApi({
+  baseUrl: BASE_URL,
+  apiKey: API_KEY,
+});
 
 const server = new Server(
-  { name: "openproject-mcp", version: "1.0.0" },
+  { name: "openproject-mcp", version: "1.1.0" },
   { capabilities: { tools: {} } }
 );
-
-async function apiRequest(endpoint, method, body) {
-  method = method || "GET";
-  const url = endpoint.startsWith("http") ? endpoint : BASE_URL + endpoint;
-
-  const headers = {
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-  };
-
-  if (API_KEY) {
-    const auth = Buffer.from("apikey:" + API_KEY).toString("base64");
-    headers["Authorization"] = "Basic " + auth;
-  }
-
-  const options = { method: method, headers: headers };
-  if (body && method !== "GET") {
-    options.body = JSON.stringify(body);
-  }
-
-  const response = await fetch(url, options);
-
-  if (!response.ok) {
-    throw new Error("API Error: " + response.status + " " + response.statusText);
-  }
-
-  return response.json();
-}
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -175,7 +156,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["endpoint"]
       }
-    }
+    },
+    ...CLOUDBSD_STATUS_TOOLS
   ]
 }));
 
@@ -428,8 +410,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
       }
 
-      default:
+      default: {
+        const cloudbsdResult = await handleCloudbsdStatusTool(name, args, apiRequest);
+        if (cloudbsdResult !== undefined) {
+          result = cloudbsdResult;
+          break;
+        }
         throw new Error("Unknown tool: " + name);
+      }
     }
 
     return {
