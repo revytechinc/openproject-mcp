@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const root = dirname(fileURLToPath(new URL(".", import.meta.url)));
+const serverSource = readFileSync(join(root, "lib", "server.js"), "utf8");
 const indexSource = readFileSync(join(root, "index.js"), "utf8");
 
 const UPSTREAM_TOOLS = [
@@ -24,14 +25,19 @@ const UPSTREAM_TOOLS = [
 test("upstream OpenProject tools remain registered", () => {
   for (const name of UPSTREAM_TOOLS) {
     assert.match(
-      indexSource,
+      serverSource,
       new RegExp('name: "' + name + '"'),
       "missing tool registration: " + name
     );
     assert.match(
-      indexSource,
+      serverSource,
       new RegExp('case "' + name + '"'),
       "missing tool handler: " + name
     );
   }
+});
+
+test("stdio entry delegates to createMcpServer", () => {
+  assert.match(indexSource, /createMcpServer/);
+  assert.match(indexSource, /StdioServerTransport/);
 });
