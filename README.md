@@ -204,3 +204,23 @@ Contributions are welcome! Please open an issue or submit a pull request.
 
 - [OpenProject API Documentation](https://www.openproject.org/docs/api/)
 - [Model Context Protocol](https://modelcontextprotocol.io/)
+
+## Caller-token auth (Approach A)
+
+HTTP mode (`openproject-mcp-http` / `http.js`) requires:
+
+```http
+Authorization: Bearer <OpenProject API access token for that person>
+```
+
+The gateway validates the token with `GET /api/v3/users/me`, then uses it
+(Basic `apikey:<token>`) for every OpenProject API call so ACLs and authorship
+belong to that person — not a shared service account.
+
+- Fail closed: missing/invalid Bearer → HTTP 401
+- Stdio mode still accepts `OPENPROJECT_API_KEY` for local/dev
+- Nginx should require a non-empty `Authorization` header and pass it through
+  (do not hardcode a single shared `mcp.bearer` allowlist)
+
+Per-agent tokens are staged on orch001 as
+`~/.creds/track.cloudbsd.org/<login>.bearer` (mode 0600).
