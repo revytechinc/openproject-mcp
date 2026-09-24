@@ -222,5 +222,6 @@ belong to that person — not a shared service account.
 - Nginx should require a non-empty `Authorization` header and pass it through
   (do not hardcode a single shared `mcp.bearer` allowlist)
 
-Per-agent tokens are staged on orch001 as
-`~/.creds/track.cloudbsd.org/<login>.bearer` (mode 0600).
+Per-agent tokens are staged outside this repository, one file per login,
+mode 0600. The host and path are recorded in internal operations
+documentation.
