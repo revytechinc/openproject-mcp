@@ -6,6 +6,7 @@ import {
   runWithCallerToken,
   resolveOpenProjectToken,
   getCallerToken,
+  validateCallerToken,
 } from "../lib/auth-context.js";
 
 test("parseBearerAuthorization accepts Bearer only", () => {
@@ -66,4 +67,49 @@ test("createApi uses caller token from getApiKey", async () => {
     "base64"
   ).toString();
   assert.equal(decoded, "apikey:tok-1");
+});
+
+function fakeResponse(status, body = "{}") {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async json() {
+      return JSON.parse(body);
+    },
+  };
+}
+
+test("validateCallerToken accepts a token users/me answers 200 for", async () => {
+  const r = await validateCallerToken("https://op.invalid/", "tok", async () =>
+    fakeResponse(200, '{"_type":"User","id":7}')
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.user.id, 7);
+});
+
+test("validateCallerToken: 401 is a rejected token, not an outage", async () => {
+  const r = await validateCallerToken("https://op.invalid", "tok", async () =>
+    fakeResponse(401)
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 401);
+  assert.equal(r.unavailable, false);
+});
+
+test("validateCallerToken: 502 from the proxy is an outage", async () => {
+  const r = await validateCallerToken("https://op.invalid", "tok", async () =>
+    fakeResponse(502)
+  );
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 502);
+  assert.equal(r.unavailable, true);
+});
+
+test("validateCallerToken: connection failure is an outage (503)", async () => {
+  const r = await validateCallerToken("https://op.invalid", "tok", async () => {
+    throw new TypeError("fetch failed");
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 503);
+  assert.equal(r.unavailable, true);
 });
