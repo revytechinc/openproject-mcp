@@ -37,11 +37,12 @@ async function readJsonBody(req) {
   }
 }
 
-function sendJson(res, status, body) {
+function sendJson(res, status, body, extraHeaders = {}) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(payload),
+    ...extraHeaders,
   });
   res.end(payload);
 }
@@ -73,6 +74,24 @@ const httpServer = http.createServer(async (req, res) => {
   }
 
   const validated = await validateCallerToken(BASE_URL, bearer);
+  if (!validated.ok && validated.unavailable) {
+    // OpenProject itself is down or restarting; the token was not judged.
+    sendJson(
+      res,
+      503,
+      {
+        jsonrpc: "2.0",
+        error: {
+          code: -32002,
+          message: "OpenProject unavailable, retry shortly",
+          data: { status: validated.status },
+        },
+        id: null,
+      },
+      { "Retry-After": "10" }
+    );
+    return;
+  }
   if (!validated.ok) {
     sendJson(res, 401, {
       jsonrpc: "2.0",
