@@ -81,6 +81,9 @@ The CloudBSD project identifier is `cloudbsd`. Components/lanes are first-class 
 | `list_work_packages` | List work packages with filters |
 | `get_children` | Get child work packages of a parent |
 | `list_statuses` | List all available statuses |
+| `get_status` | Get one status by id (API v3) |
+| `create_status` | Create a work-package status (rails runner or admin HTML; API v3 is GET-only) |
+| `update_status` | Update/rename a status (admin HTML session) |
 | `list_types` | List all work package types (Feature, Task, Bug, etc.) |
 | `get_user` | Get user information |
 | `create_work_package` | Create a new work package |
@@ -174,18 +177,39 @@ relation_upsert({
 
 `relates_to` is stored as native OpenProject `relates`. `blocks` and `precedes` are also accepted. Repeating the same edge returns the existing relation.
 
+### Admin: create / rename work-package statuses
+
+OpenProject **API v3 Statuses are GET-only**. `create_status` / `update_status` mutate via:
+
+1. **`rails`** (preferred on the OpenProject host) — `bin/rails runner` with `OPENPROJECT_ENVFILE` (survives admin 2FA)
+2. **`web`** — admin HTML session (CSRF + cookie); fails closed with `LOGIN_REQUIRES_2FA` when login redirects to two-factor
+
+`OPENPROJECT_STATUS_BACKEND=auto|rails|web` (default `auto`: rails when envfile + `bin/rails` are readable). Passwords are **never** tool arguments — only env / 0600 files for the web path.
+
+```javascript
+create_status({ name: "PR Ready", color: "#74C0FC" })
+update_status({ id: 9, name: "Ready for testing" })
+get_status({ id: 9 })
+```
+
+Idempotent create: if the name already exists, returns the existing status with `idempotent: true` (unless `force: true`).
+
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENPROJECT_URL` | Yes | OpenProject instance URL. For CloudBSD status writes, use trackdev (DEV). |
-| `OPENPROJECT_API_KEY` | Yes | API key from OpenProject |
+| `OPENPROJECT_API_KEY` | Yes* | API key from OpenProject (*stdio mode; HTTP caller-token mode uses client Bearer instead) |
+| `OPENPROJECT_WEB_USER` | For status admin | OpenProject login username (e.g. `mlapointe`) |
+| `OPENPROJECT_WEB_PASSWORD_FILE` | For status admin | Path to 0600 file containing the web password (never inline in config) |
+
+Aliases: `TRACK_WEB_USER`, `TRACK_WEB_PASSWORD_FILE`.
 
 ## Requirements
 
 - Node.js >= 18.0.0
 - OpenProject instance with API access
-
+- Admin web login for `create_status` / `update_status`
 ## Tests
 
 ```bash

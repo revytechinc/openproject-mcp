@@ -22,6 +22,8 @@ const UPSTREAM_TOOLS = [
   "raw_api_call",
 ];
 
+const STATUS_ADMIN_TOOLS = ["get_status", "create_status", "update_status"];
+
 test("upstream OpenProject tools remain registered", () => {
   for (const name of UPSTREAM_TOOLS) {
     assert.match(
@@ -33,6 +35,19 @@ test("upstream OpenProject tools remain registered", () => {
       serverSource,
       new RegExp('case "' + name + '"'),
       "missing tool handler: " + name
+    );
+  }
+});
+
+test("status admin tools are wired via STATUS_ADMIN_TOOLS", () => {
+  assert.match(serverSource, /\.\.\.STATUS_ADMIN_TOOLS/);
+  assert.match(serverSource, /handleStatusAdminTool/);
+  const adminSource = readFileSync(join(root, "lib", "statuses-admin.js"), "utf8");
+  for (const name of STATUS_ADMIN_TOOLS) {
+    assert.match(
+      adminSource,
+      new RegExp('name: "' + name + '"'),
+      "missing STATUS_ADMIN_TOOLS entry: " + name
     );
   }
 });
