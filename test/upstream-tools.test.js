@@ -24,6 +24,44 @@ const UPSTREAM_TOOLS = [
 
 const STATUS_ADMIN_TOOLS = ["get_status", "create_status", "update_status"];
 
+const PROJECT_TOOLS = [
+  "list_versions",
+  "create_version",
+  "update_project",
+  "get_relations",
+  "create_relation",
+];
+
+test("project tools are wired via PROJECT_TOOLS", () => {
+  assert.match(serverSource, /\.\.\.PROJECT_TOOLS/);
+  assert.match(serverSource, /handleProjectTool/);
+  const projectSource = readFileSync(join(root, "lib", "project-tools.js"), "utf8");
+  for (const name of PROJECT_TOOLS) {
+    assert.match(
+      projectSource,
+      new RegExp('name: "' + name + '"'),
+      "missing PROJECT_TOOLS entry: " + name
+    );
+  }
+});
+
+test("the work package tools read both response shapes", () => {
+  // Instances differ: some carry status, type, assignee and parent as
+  // top-level fields, others only through _links. The helper reads both.
+  assert.match(serverSource, /normalizeWorkPackage/);
+  const helperSource = readFileSync(join(root, "lib", "work-packages.js"), "utf8");
+  assert.match(helperSource, /export function normalizeWorkPackage/);
+  assert.match(helperSource, /export async function resolveProjectId/);
+  assert.match(helperSource, /export async function listWorkPackages/);
+  assert.match(helperSource, /export function workPackageUpdateBody/);
+  assert.match(helperSource, /export function projectUpdateBody/);
+});
+
+test("a failing call says what failed and how", () => {
+  assert.match(serverSource, /openproject-mcp: /);
+  assert.match(serverSource, /HTTP " \+ error\.status/);
+});
+
 test("upstream OpenProject tools remain registered", () => {
   for (const name of UPSTREAM_TOOLS) {
     assert.match(
