@@ -15,12 +15,13 @@
  */
 
 import http from "node:http";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { createMcpServer } from "./lib/server.js";
 import {
   parseBearerAuthorization,
+  requireCallerToken,
   runWithCallerToken,
   validateCallerToken,
 } from "./lib/auth-context.js";
@@ -29,15 +30,47 @@ import {
   isLoopbackAddress,
   sanitizeNotifyEvent,
 } from "./lib/session-hub.js";
+import { requireBaseUrl } from "./lib/config.js";
 
-const BASE_URL =
-  process.env.OPENPROJECT_URL || "https://your-openproject-instance.com";
+// No default: an unset or placeholder OPENPROJECT_URL refuses to start (see isMain).
+const BASE_URL = process.env.OPENPROJECT_URL || "";
 const PORT = Number(process.env.OPENPROJECT_MCP_PORT || process.env.PORT || 8000);
 const BIND = process.env.OPENPROJECT_MCP_BIND || "127.0.0.1";
 
-export async function readJsonBody(req) {
+export const MAX_BODY_BYTES = 1024 * 1024;
+export const TOKEN_CACHE_TTL_MS = 60 * 1000;
+export const TOKEN_CACHE_MAX = 1000;
+export const SESSION_IDLE_MS = 30 * 60 * 1000;
+
+function bodyTooLarge() {
+  const error = new Error("Request body exceeds " + MAX_BODY_BYTES + " bytes");
+  error.statusCode = 413;
+  return error;
+}
+
+/**
+ * Read and parse a JSON body, at most MAX_BODY_BYTES. Throws an error with
+ * statusCode 413 as soon as the body is larger (a declared Content-Length,
+ * or the running total of a chunked body): the rest is never read. The
+ * caller answers 413 and then destroys the request (refuseTooLarge).
+ * Returns undefined for empty or unparseable bodies.
+ */
+export async function readJsonBody(req, limit = MAX_BODY_BYTES) {
+  const declared = Number(req.headers?.["content-length"]);
+  if (Number.isFinite(declared) && declared > limit) throw bodyTooLarge();
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  let total = 0;
+  // destroyOnReturn: false so that stopping early does not tear the socket
+  // down before the 413 is written.
+  const source = typeof req.iterator === "function" ? req.iterator({ destroyOnReturn: false }) : req;
+  for await (const chunk of source) {
+    total += chunk.length;
+    if (total > limit) {
+      if (typeof req.pause === "function") req.pause();
+      throw bodyTooLarge();
+    }
+    chunks.push(chunk);
+  }
   if (!chunks.length) return undefined;
   const raw = Buffer.concat(chunks).toString("utf8");
   if (!raw) return undefined;
@@ -45,6 +78,23 @@ export async function readJsonBody(req) {
     return JSON.parse(raw);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Answer 413 (Connection: close) and destroy the request once the answer
+ * is written, instead of draining an oversized body.
+ */
+export function refuseTooLarge(req, res, payload) {
+  if (!res.headersSent) sendJson(res, 413, payload, { Connection: "close" });
+  else if (!res.writableEnded) res.end();
+  const destroy = () => {
+    if (!req.destroyed) req.destroy();
+  };
+  if (res.writableFinished) destroy();
+  else {
+    res.once("finish", destroy);
+    res.once("close", destroy);
   }
 }
 
@@ -56,6 +106,57 @@ export function sendJson(res, status, body, extraHeaders = {}) {
     ...extraHeaders,
   });
   res.end(payload);
+}
+
+function sendTooLarge(req, res) {
+  refuseTooLarge(req, res, {
+    jsonrpc: "2.0",
+    error: { code: -32600, message: "Request body too large (limit " + MAX_BODY_BYTES + " bytes)" },
+    id: null,
+  });
+}
+
+/**
+ * In-memory cache of successfully validated caller tokens. Keys are the
+ * SHA-256 of the token; the token itself is never stored. Entries live for
+ * ttlMs; at most max entries are kept (oldest evicted first).
+ */
+export function createTokenCache({ ttlMs = TOKEN_CACHE_TTL_MS, max = TOKEN_CACHE_MAX, now = Date.now } = {}) {
+  /** @type {Map<string, { value: unknown, expires: number }>} */
+  const entries = new Map();
+  const keyOf = (token) => createHash("sha256").update(String(token)).digest("hex");
+  return {
+    get(token) {
+      const key = keyOf(token);
+      const hit = entries.get(key);
+      if (!hit) return null;
+      if (hit.expires <= now()) {
+        entries.delete(key);
+        return null;
+      }
+      return hit.value;
+    },
+    set(token, value) {
+      const key = keyOf(token);
+      entries.delete(key);
+      const t = now();
+      if (entries.size >= max) {
+        for (const [k, v] of entries) {
+          if (v.expires <= t) entries.delete(k);
+        }
+      }
+      while (entries.size >= max) {
+        entries.delete(entries.keys().next().value);
+      }
+      entries.set(key, { value, expires: t + ttlMs });
+    },
+    keys() {
+      return [...entries.keys()];
+    },
+    size() {
+      return entries.size;
+    },
+  };
 }
 
 function userIdentity(user) {
@@ -99,6 +200,8 @@ function sessionForCaller(hub, sessionId, caller, res) {
       return null;
     }
   }
+  // Only a caller who passed the identity check keeps the session alive.
+  entry.lastSeen = Date.now();
   return entry;
 }
 
@@ -110,6 +213,7 @@ export function createRequestHandler(options = {}) {
   const baseUrl = options.baseUrl || BASE_URL;
   const hub = options.hub || createSessionHub();
   const validateToken = options.validateToken || validateCallerToken;
+  const tokenCache = options.tokenCache || createTokenCache();
   const notifyToken =
     options.notifyToken !== undefined
       ? options.notifyToken
@@ -136,7 +240,8 @@ export function createRequestHandler(options = {}) {
       });
       return null;
     }
-    const validated = await validateToken(baseUrl, bearer);
+    const cached = tokenCache.get(bearer);
+    const validated = cached || (await validateToken(baseUrl, bearer));
     if (!validated.ok && validated.unavailable) {
       // OpenProject itself is down or restarting; the token was not judged.
       sendJson(
@@ -176,6 +281,7 @@ export function createRequestHandler(options = {}) {
       });
       return null;
     }
+    if (!cached) tokenCache.set(bearer, validated);
     return { bearer, identity };
   }
 
@@ -200,7 +306,16 @@ export function createRequestHandler(options = {}) {
       sendJson(res, 405, { error: "POST only" });
       return;
     }
-    const body = await readJsonBody(req);
+    let body;
+    try {
+      body = await readJsonBody(req);
+    } catch (error) {
+      if (error.statusCode === 413) {
+        refuseTooLarge(req, res, { error: "body too large" });
+        return;
+      }
+      throw error;
+    }
     if (!body || typeof body !== "object") {
       sendJson(res, 400, { error: "JSON body required" });
       return;
@@ -215,7 +330,9 @@ export function createRequestHandler(options = {}) {
   }
 
   async function openSession(req, res, caller, body) {
-    const mcp = createMcpServer({ baseUrl });
+    // Tool calls run as the caller only: requireCallerToken never falls back
+    // to OPENPROJECT_API_KEY (code NO_CALLER_TOKEN when the context is missing).
+    const mcp = createMcpServer({ baseUrl, getApiKey: requireCallerToken });
     let registeredId = null;
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -227,10 +344,16 @@ export function createRequestHandler(options = {}) {
           login: caller.identity.login,
           server: mcp,
           transport,
+          lastSeen: Date.now(),
+          activeStreams: 0,
         });
       },
     });
+    let closed = false;
     transport.onclose = () => {
+      // mcp.close() closes the transport, which fires onclose again: once only.
+      if (closed) return;
+      closed = true;
       if (registeredId) hub.unregister(registeredId);
       mcp.close().catch(() => {});
     };
@@ -260,6 +383,14 @@ export function createRequestHandler(options = {}) {
     }
     const entry = sessionForCaller(hub, sessionId, caller, res);
     if (!entry) return;
+    if (req.method === "GET") {
+      // An open SSE stream keeps the session alive for push notifications.
+      entry.activeStreams = (entry.activeStreams || 0) + 1;
+      res.on("close", () => {
+        entry.activeStreams = Math.max(0, (entry.activeStreams || 1) - 1);
+        entry.lastSeen = Date.now();
+      });
+    }
     await entry.transport.handleRequest(req, res);
     if (req.method === "DELETE") hub.unregister(sessionId);
   }
@@ -281,6 +412,10 @@ export function createRequestHandler(options = {}) {
         }
         sendJson(res, 405, { error: "method not allowed" });
       } catch (error) {
+        if (error && error.statusCode === 413) {
+          sendTooLarge(req, res);
+          return;
+        }
         console.error("mcp request failed:", error);
         if (!res.headersSent) {
           sendJson(res, 500, {
@@ -323,11 +458,39 @@ export function createRequestHandler(options = {}) {
   };
 }
 
+/**
+ * Close sessions idle longer than idleMs that have no open SSE stream.
+ * @param {ReturnType<typeof createSessionHub>} hub
+ */
+export async function sweepIdle(hub, idleMs = SESSION_IDLE_MS, now = Date.now()) {
+  const expired = [];
+  for (const entry of hub.list()) {
+    if ((entry.activeStreams || 0) > 0) continue;
+    const lastSeen = Number(entry.lastSeen);
+    if (!Number.isFinite(lastSeen) || now - lastSeen <= idleMs) continue;
+    expired.push(entry.sessionId);
+    hub.unregister(entry.sessionId);
+    try {
+      await entry.transport?.close?.();
+    } catch {
+      // A transport that fails to close is already gone from the hub.
+    }
+  }
+  return expired;
+}
+
 export function createHttpServer(options = {}) {
   const hub = options.hub || createSessionHub();
   const handler = createRequestHandler({ ...options, hub });
   const server = http.createServer(handler);
-  return { server, hub, handler };
+  const idleMs = options.sessionIdleMs || SESSION_IDLE_MS;
+  const sweepIdleSessions = (now = Date.now()) => sweepIdle(hub, idleMs, now);
+  const timer = setInterval(() => {
+    sweepIdleSessions().catch(() => {});
+  }, Math.min(idleMs, 60 * 1000));
+  timer.unref();
+  server.on("close", () => clearInterval(timer));
+  return { server, hub, handler, sweepIdleSessions };
 }
 
 const isMain =
@@ -336,7 +499,13 @@ const isMain =
     process.argv[1].endsWith("openproject-mcp-http"));
 
 if (isMain) {
-  const { server } = createHttpServer();
+  try {
+    requireBaseUrl(BASE_URL);
+  } catch (error) {
+    console.error("openproject-mcp-http: " + error.message);
+    process.exit(1);
+  }
+  const { server } = createHttpServer({ baseUrl: requireBaseUrl(BASE_URL) });
   server.listen(PORT, BIND, () => {
     console.error(
       `openproject-mcp caller-token http on ${BIND}:${PORT} (stateful + /internal/notify)`

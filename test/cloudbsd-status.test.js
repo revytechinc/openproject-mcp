@@ -17,6 +17,7 @@ import {
   relationUpsert,
 } from "../lib/cloudbsd-status.js";
 import { createApi, hrefId } from "../lib/api.js";
+import { checkFilters } from "./fake-op.js";
 
 const SCHEMA = {
   customField11: { name: "direction", type: "String", writable: true },
@@ -207,13 +208,22 @@ function createOpenProjectMock(state) {
       }
       return structuredClone(wp);
     }
-    if (method === "GET" && path === "/api/v3/projects/cloudbsd/work_packages") {
+    if (method === "GET" && (path === "/api/v3/projects/cloudbsd/work_packages" || path === "/api/v3/work_packages")) {
+      // Like OpenProject: the project collection includes subprojects; the
+      // global one honours a project filter; both page (pageSize, offset).
       const query = new URL(endpoint, "https://op.example.invalid").searchParams;
       const filters = JSON.parse(query.get("filters") || "[]");
-      const elements = Object.values(state.workPackages).filter((wp) => {
+      const all = Object.values(state.workPackages).filter((wp) => {
         return filters.every((filter) => {
+          if (filter.project) {
+            return filter.project.values.includes(String(wp.projectId ?? 3));
+          }
           if (filter.subject) {
-            return filter.subject.values.includes(wp.subject);
+            const { operator, values } = filter.subject;
+            if (operator === "~") {
+              return values.some((v) => String(wp.subject).toLowerCase().includes(String(v).toLowerCase()));
+            }
+            return values.includes(wp.subject);
           }
           if (filter.category) {
             const href = wp._links.category && wp._links.category.href;
@@ -222,7 +232,15 @@ function createOpenProjectMock(state) {
           return true;
         });
       });
-      return { _embedded: { elements: elements.map((item) => structuredClone(item)) } };
+      const pageSize = Number(query.get("pageSize") || 20);
+      const offset = Number(query.get("offset") || 1);
+      const elements = all.slice((offset - 1) * pageSize, offset * pageSize);
+      return {
+        total: all.length,
+        pageSize,
+        offset,
+        _embedded: { elements: elements.map((item) => structuredClone(item)) },
+      };
     }
     if (method === "POST" && path === "/api/v3/projects/cloudbsd/work_packages") {
       const id = state.nextId++;
@@ -284,6 +302,104 @@ function createOpenProjectMock(state) {
     throw new Error("Unexpected request: " + method + " " + endpoint);
   };
 }
+
+test("status_upsert finds its lane with filters OpenProject accepts, by exact subject", async () => {
+  const state = {
+    workPackages: {
+      30: {
+        id: 30,
+        subject: "Server farm migration",
+        lockVersion: 1,
+        description: { raw: "" },
+        _links: {
+          schema: { href: "/api/v3/work_packages/schemas/3-4" },
+          type: { href: "/api/v3/types/4", title: "Ops" },
+          status: { href: "/api/v3/statuses/1", title: "New" },
+        },
+      },
+    },
+    relations: [],
+    nextId: 40,
+    nextRelationId: 1,
+  };
+  const { request, sent } = strictOpenProject(state);
+  const created = await statusUpsert(request, { component: "Server", done: ["x"] });
+  assert.equal(created.action, "created", "a subject that only contains the lane is not the lane");
+  assert.notEqual(created.id, 30);
+  const again = await statusUpsert(request, { lane: "Server", next: "y" });
+  assert.equal(again.action, "updated");
+  assert.equal(again.id, created.id);
+  assert.ok(sent.some((e) => e.includes("filters=")), "the lane was looked up by filter");
+});
+
+/**
+ * The OpenProject mock behind a 400 for filters OpenProject refuses
+ * (fake-op checkFilters); `sent` records every endpoint.
+ */
+function strictOpenProject(state) {
+  const inner = createOpenProjectMock(state);
+  const sent = [];
+  const request = (endpoint, method, body, options) => {
+    checkFilters(endpoint);
+    sent.push(String(endpoint));
+    return inner(endpoint, method, body, options);
+  };
+  return { request, sent };
+}
+
+/** A lane-like work package (projectId 3 is the project itself). */
+function laneWorkPackage(id, subject, projectId) {
+  return {
+    id,
+    subject,
+    projectId,
+    lockVersion: 1,
+    description: { raw: "" },
+    _links: {
+      schema: { href: "/api/v3/work_packages/schemas/3-4" },
+      type: { href: "/api/v3/types/4", title: "Ops" },
+      status: { href: "/api/v3/statuses/1", title: "New" },
+    },
+  };
+}
+
+test("status_upsert pages the lane search and stays in the project itself", async () => {
+  const workPackages = {};
+  // An exact "Server" in a subproject (id 9) comes first, then 120 near misses,
+  // and the project's own exact "Server" is on page 2.
+  workPackages[1] = laneWorkPackage(1, "Server", 9);
+  for (let i = 0; i < 120; i++) workPackages[100 + i] = laneWorkPackage(100 + i, "Server farm " + i, 3);
+  workPackages[500] = laneWorkPackage(500, "Server", 3);
+  const state = { workPackages, relations: [], nextId: 600, nextRelationId: 1 };
+  const { request, sent } = strictOpenProject(state);
+  const result = await statusUpsert(request, { lane: "Server", next: "y" });
+  assert.equal(result.action, "updated");
+  assert.equal(result.id, 500, "found the project's own lane on page 2");
+  const searches = sent.filter((e) => e.includes("filters="));
+  assert.ok(searches.every((e) => e.startsWith("/api/v3/work_packages?")), "searches the global collection");
+  for (const e of searches) {
+    const filters = JSON.parse(new URL(e, "https://x.invalid").searchParams.get("filters"));
+    assert.deepEqual(filters[0], { project: { operator: "=", values: ["3"] } });
+  }
+  assert.ok(searches.some((e) => new URL(e, "https://x.invalid").searchParams.get("offset") === "2"));
+});
+
+test("the category fallback reads one page and returns its first work package", async () => {
+  const workPackages = {};
+  // 150 work packages in the Server category (id 8), none with the exact lane subject.
+  for (let i = 0; i < 150; i++) {
+    const wp = laneWorkPackage(200 + i, "Server work " + i, 3);
+    wp._links.category = { href: "/api/v3/categories/8", title: "Server" };
+    workPackages[200 + i] = wp;
+  }
+  const state = { workPackages, relations: [], nextId: 600, nextRelationId: 1 };
+  const { request, sent } = strictOpenProject(state);
+  const result = await statusUpsert(request, { lane: "Server", next: "y" });
+  assert.equal(result.action, "updated");
+  assert.equal(result.id, 200, "the category's first work package");
+  const categorySearches = sent.filter((e) => e.includes("filters=") && e.includes("category"));
+  assert.equal(categorySearches.length, 1, "exactly one request for the category fallback: " + categorySearches.join(" | "));
+});
 
 test("status_upsert creates then updates a Server lane work package", async () => {
   const state = { workPackages: {}, relations: [], nextId: 40, nextRelationId: 1 };
