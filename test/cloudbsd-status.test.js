@@ -322,13 +322,7 @@ test("status_upsert finds its lane with filters OpenProject accepts, by exact su
     nextId: 40,
     nextRelationId: 1,
   };
-  const inner = createOpenProjectMock(state);
-  const sent = [];
-  const request = (endpoint, method, body, options) => {
-    checkFilters(endpoint); // 400 for operator/filter pairs OpenProject refuses
-    sent.push(String(endpoint));
-    return inner(endpoint, method, body, options);
-  };
+  const { request, sent } = strictOpenProject(state);
   const created = await statusUpsert(request, { component: "Server", done: ["x"] });
   assert.equal(created.action, "created", "a subject that only contains the lane is not the lane");
   assert.notEqual(created.id, 30);
@@ -338,6 +332,22 @@ test("status_upsert finds its lane with filters OpenProject accepts, by exact su
   assert.ok(sent.some((e) => e.includes("filters=")), "the lane was looked up by filter");
 });
 
+/**
+ * The OpenProject mock behind a 400 for filters OpenProject refuses
+ * (fake-op checkFilters); `sent` records every endpoint.
+ */
+function strictOpenProject(state) {
+  const inner = createOpenProjectMock(state);
+  const sent = [];
+  const request = (endpoint, method, body, options) => {
+    checkFilters(endpoint);
+    sent.push(String(endpoint));
+    return inner(endpoint, method, body, options);
+  };
+  return { request, sent };
+}
+
+/** A lane-like work package (projectId 3 is the project itself). */
 function laneWorkPackage(id, subject, projectId) {
   return {
     id,
@@ -361,13 +371,7 @@ test("status_upsert pages the lane search and stays in the project itself", asyn
   for (let i = 0; i < 120; i++) workPackages[100 + i] = laneWorkPackage(100 + i, "Server farm " + i, 3);
   workPackages[500] = laneWorkPackage(500, "Server", 3);
   const state = { workPackages, relations: [], nextId: 600, nextRelationId: 1 };
-  const inner = createOpenProjectMock(state);
-  const sent = [];
-  const request = (endpoint, method, body, options) => {
-    checkFilters(endpoint);
-    sent.push(String(endpoint));
-    return inner(endpoint, method, body, options);
-  };
+  const { request, sent } = strictOpenProject(state);
   const result = await statusUpsert(request, { lane: "Server", next: "y" });
   assert.equal(result.action, "updated");
   assert.equal(result.id, 500, "found the project's own lane on page 2");
@@ -378,6 +382,23 @@ test("status_upsert pages the lane search and stays in the project itself", asyn
     assert.deepEqual(filters[0], { project: { operator: "=", values: ["3"] } });
   }
   assert.ok(searches.some((e) => new URL(e, "https://x.invalid").searchParams.get("offset") === "2"));
+});
+
+test("the category fallback reads one page and returns its first work package", async () => {
+  const workPackages = {};
+  // 150 work packages in the Server category (id 8), none with the exact lane subject.
+  for (let i = 0; i < 150; i++) {
+    const wp = laneWorkPackage(200 + i, "Server work " + i, 3);
+    wp._links.category = { href: "/api/v3/categories/8", title: "Server" };
+    workPackages[200 + i] = wp;
+  }
+  const state = { workPackages, relations: [], nextId: 600, nextRelationId: 1 };
+  const { request, sent } = strictOpenProject(state);
+  const result = await statusUpsert(request, { lane: "Server", next: "y" });
+  assert.equal(result.action, "updated");
+  assert.equal(result.id, 200, "the category's first work package");
+  const categorySearches = sent.filter((e) => e.includes("filters=") && e.includes("category"));
+  assert.equal(categorySearches.length, 1, "exactly one request for the category fallback: " + categorySearches.join(" | "));
 });
 
 test("status_upsert creates then updates a Server lane work package", async () => {
