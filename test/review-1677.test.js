@@ -948,3 +948,27 @@ test("idFromHref always returns a numeric id (or null)", async () => {
   }
   assert.deepEqual(linkRef({ href: "/api/v3/users/me", title: "Me" }), { id: null, name: "Me" });
 });
+
+// ---- findUsersByLogin pages /principals --------------------------------------
+
+test("find_user by login pages /principals (pageSize 100) until the exact login", async () => {
+  const near = Array.from({ length: 130 }, (_, i) => ({ _type: "User", id: 1000 + i, name: "Bot " + i, login: "track-bot-" + i }));
+  const all = [...near, { _type: "User", id: 8, name: "Bot", login: "track-bot" }];
+  const { request, calls } = fakeApi([
+    {
+      method: "GET",
+      path: "/api/v3/principals",
+      reply: ({ query: q }) => {
+        const size = Number(q.get("pageSize") || 20);
+        const offset = Number(q.get("offset") || 1);
+        return collection(all.slice((offset - 1) * size, offset * size), { total: all.length, pageSize: size, offset });
+      },
+    },
+  ]);
+  assert.deepEqual(await handleProjectAdminTool("find_user", { login: "track-bot" }, request, OPTIONS), [
+    { id: 8, name: "Bot", login: "track-bot" },
+  ]);
+  assert.deepEqual(calls.map((c) => param(c, "pageSize")), ["100", "100"]);
+  assert.deepEqual(calls.map((c) => param(c, "offset")), [null, "2"]);
+  assert.equal(calls.some((c) => c.path.startsWith("/api/v3/users")), false, "no admin-only fallback when principals has it");
+});

@@ -78,7 +78,7 @@ The CloudBSD project identifier is `cloudbsd`. Components/lanes are first-class 
 
 Use the named tools; `raw_api_call` is a last resort for endpoints no tool covers.
 
-Rules shared by the named tools (everything below except the upstream `list_projects`, `get_children`, `list_statuses`, `list_types`, `get_user`, `log_time`, `raw_api_call`, the status-admin and the CloudBSD status tools):
+Rules shared by the named tools (everything below except the upstream `list_projects`, `get_children`, `list_statuses`, `list_types`, `get_user`, `log_time`, the status-admin and the CloudBSD status tools):
 
 - **Unknown argument names are refused**, with the accepted names and a "did you mean" for close matches. Nothing is sent to OpenProject.
 - **A `null` argument is treated as absent, and so is `""` for `subject` or `description`.** To empty a field on update, use `clear: ["parentId", "dueDate", "description", ...]`.
@@ -282,9 +282,10 @@ Idempotent create: if the name already exists, returns the existing status with 
   destroyed rather than read to the end. A session's idle clock is refreshed
   only after the caller's identity matches the session.
 - **Errors** come back as `isError: true` with a JSON body
-  `{"error":{"code","httpStatus","errorIdentifier","attribute","message","hint","allowedStatuses","allowedTypes"}}`
+  `{"error":{"code","httpStatus","errorIdentifier","attribute","opMessage","message","hint","allowedStatuses","allowedTypes"}}`
   (fields that are not known are left out); `errorIdentifier` is exactly what
-  OpenProject sent. Codes are UPPER_SNAKE.
+  OpenProject sent. `opMessage` is OpenProject's own message, given when the
+  tool's `message` does not already quote it. Codes are UPPER_SNAKE.
 - **`raw_api_call` is a last resort.** It accepts `endpoint` or `path`, a
   `query` object and any-case `method`, and refuses unknown arguments; when a
   typed tool covers the call (for example `get_work_package`,

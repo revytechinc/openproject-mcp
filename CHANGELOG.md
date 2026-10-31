@@ -58,8 +58,9 @@
 - **`list_work_packages` returns `{total, offset, pageSize, hasMore, elements}`**
   instead of a bare array. The default `pageSize` stays 100.
 - **Errors are JSON**: `isError: true` with
-  `{"error": {code, httpStatus, errorIdentifier, attribute, message, hint,
-  allowedStatuses?, allowedTypes?}}` instead of plain text. Codes are
+  `{"error": {code, httpStatus, errorIdentifier, attribute, opMessage?, message,
+  hint, allowedStatuses?, allowedTypes?}}` instead of plain text (`opMessage`
+  is OpenProject's own message when `message` does not already quote it). Codes are
   UPPER_SNAKE, for example `UPDATE_CONFLICT` (409, errorIdentifier
   `urn:openproject-org:api:v3:errors:UpdateConflict`), `INVALID_TRANSITION`,
   `TYPE_NOT_ALLOWED`, `INVALID_ID`, `INVALID_ARGUMENT`, `REDIRECT_REFUSED`,

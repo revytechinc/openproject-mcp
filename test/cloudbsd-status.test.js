@@ -208,11 +208,16 @@ function createOpenProjectMock(state) {
       }
       return structuredClone(wp);
     }
-    if (method === "GET" && path === "/api/v3/projects/cloudbsd/work_packages") {
+    if (method === "GET" && (path === "/api/v3/projects/cloudbsd/work_packages" || path === "/api/v3/work_packages")) {
+      // Like OpenProject: the project collection includes subprojects; the
+      // global one honours a project filter; both page (pageSize, offset).
       const query = new URL(endpoint, "https://op.example.invalid").searchParams;
       const filters = JSON.parse(query.get("filters") || "[]");
-      const elements = Object.values(state.workPackages).filter((wp) => {
+      const all = Object.values(state.workPackages).filter((wp) => {
         return filters.every((filter) => {
+          if (filter.project) {
+            return filter.project.values.includes(String(wp.projectId ?? 3));
+          }
           if (filter.subject) {
             const { operator, values } = filter.subject;
             if (operator === "~") {
@@ -227,7 +232,15 @@ function createOpenProjectMock(state) {
           return true;
         });
       });
-      return { _embedded: { elements: elements.map((item) => structuredClone(item)) } };
+      const pageSize = Number(query.get("pageSize") || 20);
+      const offset = Number(query.get("offset") || 1);
+      const elements = all.slice((offset - 1) * pageSize, offset * pageSize);
+      return {
+        total: all.length,
+        pageSize,
+        offset,
+        _embedded: { elements: elements.map((item) => structuredClone(item)) },
+      };
     }
     if (method === "POST" && path === "/api/v3/projects/cloudbsd/work_packages") {
       const id = state.nextId++;
@@ -323,6 +336,48 @@ test("status_upsert finds its lane with filters OpenProject accepts, by exact su
   assert.equal(again.action, "updated");
   assert.equal(again.id, created.id);
   assert.ok(sent.some((e) => e.includes("filters=")), "the lane was looked up by filter");
+});
+
+function laneWorkPackage(id, subject, projectId) {
+  return {
+    id,
+    subject,
+    projectId,
+    lockVersion: 1,
+    description: { raw: "" },
+    _links: {
+      schema: { href: "/api/v3/work_packages/schemas/3-4" },
+      type: { href: "/api/v3/types/4", title: "Ops" },
+      status: { href: "/api/v3/statuses/1", title: "New" },
+    },
+  };
+}
+
+test("status_upsert pages the lane search and stays in the project itself", async () => {
+  const workPackages = {};
+  // An exact "Server" in a subproject (id 9) comes first, then 120 near misses,
+  // and the project's own exact "Server" is on page 2.
+  workPackages[1] = laneWorkPackage(1, "Server", 9);
+  for (let i = 0; i < 120; i++) workPackages[100 + i] = laneWorkPackage(100 + i, "Server farm " + i, 3);
+  workPackages[500] = laneWorkPackage(500, "Server", 3);
+  const state = { workPackages, relations: [], nextId: 600, nextRelationId: 1 };
+  const inner = createOpenProjectMock(state);
+  const sent = [];
+  const request = (endpoint, method, body, options) => {
+    checkFilters(endpoint);
+    sent.push(String(endpoint));
+    return inner(endpoint, method, body, options);
+  };
+  const result = await statusUpsert(request, { lane: "Server", next: "y" });
+  assert.equal(result.action, "updated");
+  assert.equal(result.id, 500, "found the project's own lane on page 2");
+  const searches = sent.filter((e) => e.includes("filters="));
+  assert.ok(searches.every((e) => e.startsWith("/api/v3/work_packages?")), "searches the global collection");
+  for (const e of searches) {
+    const filters = JSON.parse(new URL(e, "https://x.invalid").searchParams.get("filters"));
+    assert.deepEqual(filters[0], { project: { operator: "=", values: ["3"] } });
+  }
+  assert.ok(searches.some((e) => new URL(e, "https://x.invalid").searchParams.get("offset") === "2"));
 });
 
 test("status_upsert creates then updates a Server lane work package", async () => {
