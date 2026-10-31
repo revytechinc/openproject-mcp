@@ -17,6 +17,7 @@ import {
   relationUpsert,
 } from "../lib/cloudbsd-status.js";
 import { createApi, hrefId } from "../lib/api.js";
+import { checkFilters } from "./fake-op.js";
 
 const SCHEMA = {
   customField11: { name: "direction", type: "String", writable: true },
@@ -213,7 +214,11 @@ function createOpenProjectMock(state) {
       const elements = Object.values(state.workPackages).filter((wp) => {
         return filters.every((filter) => {
           if (filter.subject) {
-            return filter.subject.values.includes(wp.subject);
+            const { operator, values } = filter.subject;
+            if (operator === "~") {
+              return values.some((v) => String(wp.subject).toLowerCase().includes(String(v).toLowerCase()));
+            }
+            return values.includes(wp.subject);
           }
           if (filter.category) {
             const href = wp._links.category && wp._links.category.href;
@@ -284,6 +289,41 @@ function createOpenProjectMock(state) {
     throw new Error("Unexpected request: " + method + " " + endpoint);
   };
 }
+
+test("status_upsert finds its lane with filters OpenProject accepts, by exact subject", async () => {
+  const state = {
+    workPackages: {
+      30: {
+        id: 30,
+        subject: "Server farm migration",
+        lockVersion: 1,
+        description: { raw: "" },
+        _links: {
+          schema: { href: "/api/v3/work_packages/schemas/3-4" },
+          type: { href: "/api/v3/types/4", title: "Ops" },
+          status: { href: "/api/v3/statuses/1", title: "New" },
+        },
+      },
+    },
+    relations: [],
+    nextId: 40,
+    nextRelationId: 1,
+  };
+  const inner = createOpenProjectMock(state);
+  const sent = [];
+  const request = (endpoint, method, body, options) => {
+    checkFilters(endpoint); // 400 for operator/filter pairs OpenProject refuses
+    sent.push(String(endpoint));
+    return inner(endpoint, method, body, options);
+  };
+  const created = await statusUpsert(request, { component: "Server", done: ["x"] });
+  assert.equal(created.action, "created", "a subject that only contains the lane is not the lane");
+  assert.notEqual(created.id, 30);
+  const again = await statusUpsert(request, { lane: "Server", next: "y" });
+  assert.equal(again.action, "updated");
+  assert.equal(again.id, created.id);
+  assert.ok(sent.some((e) => e.includes("filters=")), "the lane was looked up by filter");
+});
 
 test("status_upsert creates then updates a Server lane work package", async () => {
   const state = { workPackages: {}, relations: [], nextId: 40, nextRelationId: 1 };
