@@ -829,12 +829,12 @@ test("string-declared id-or-name arguments still accept numbers at runtime", asy
 
 // ---- item 11: version and changelog --------------------------------------------
 
-test("version is 2.0.0 in package.json and the server, and CHANGELOG.md lists the breaking changes", async () => {
+test("version is 2.1.0 in package.json and the server, and CHANGELOG.md lists the 2.0.0 breaking changes and the 2.1.0 move", async () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(pkg.version, "2.0.0");
+  assert.equal(pkg.version, "2.1.0");
   const { client, server } = await connected(fakeFetch());
   try {
-    assert.equal(client.getServerVersion().version, "2.0.0");
+    assert.equal(client.getServerVersion().version, "2.1.0");
   } finally {
     await server.close();
   }
@@ -842,6 +842,7 @@ test("version is 2.0.0 in package.json and the server, and CHANGELOG.md lists th
   assert.ok(existsSync(changelogUrl), "CHANGELOG.md exists");
   const changelog = readFileSync(changelogUrl, "utf8");
   assert.match(changelog, /^## 2\.0\.0/m);
+  assert.match(changelog, /^## 2\.1\.0[\s\S]*projectId[\s\S]*## 2\.0\.0/m);
   for (const needle of [
     "{id, name}",
     "{total, offset, pageSize, hasMore, elements}",

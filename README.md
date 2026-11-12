@@ -4,7 +4,7 @@ Model Context Protocol (MCP) server for OpenProject API integration. Enables AI 
 
 This CloudBSD fork adds first-class write tools for [status.cloudbsd.org](https://status.cloudbsd.org) against OpenProject API v3.
 
-Version 2.0.0 changes result and error shapes; see [CHANGELOG.md](CHANGELOG.md) for the breaking changes.
+Version 2.1.0 adds moving a work package to another project (`projectId` on `update_work_package`). Version 2.0.0 changed result and error shapes; see [CHANGELOG.md](CHANGELOG.md) for the breaking changes.
 
 ## Installation
 
@@ -93,9 +93,9 @@ Rules shared by the named tools (everything below except the upstream `list_proj
 | Tool | Arguments | Returns |
 |------|-----------|---------|
 | `get_work_package` | `id` (alias `workPackageId`), `includeComments` (N newest, default 0, max 50) | `{id, subject, description, status, type, priority, assignee, responsible, author, version, parent, parentId, ancestors:[{id,name}], childIds, project, startDate, dueDate, derivedStartDate, derivedDueDate, scheduleManually, percentageDone, estimatedTime, remainingTime, createdAt, updatedAt, lockVersion, url, comments?}` |
-| `update_work_package` | `id`/`workPackageId`, `subject`, `description`, `status` (name/id) or `statusId`, `priority`, `assigneeId` (id or `"me"`), `versionId`, `parentId`, `startDate`, `dueDate`, `scheduleManually`, `percentageDone`, `estimatedTime`, `remainingTime` (ISO duration or hours), `comment`, `clear[]`, `lockVersion`, `notify` | `{id, subject, status, type, assignee, project, parentId, percentageDone, startDate, dueDate, lockVersion, updatedAt, url, retried, commentId? \| comment:{error}?}` |
-| `set_status` | `id`, `status` or `statusId`, `percentageDone?`, `comment?`, `lockVersion?`, `notify?` | as `update_work_package` |
-| `validate_update` | same as `update_work_package` (`comment`, `notify` ignored) | `{valid, errors:[{attribute,message}], allowedStatuses:[{id,name}], resulting:{startDate,dueDate,derivedStartDate,derivedDueDate}}` — writes nothing |
+| `update_work_package` | `id`/`workPackageId`, `subject`, `description`, `status` (name/id) or `statusId`, `priority`, `assigneeId` (id or `"me"`), `versionId`, `parentId` (`clear: ["parentId"]` removes it; `parentId: null` does the same where your client accepts null), `projectId` (id or identifier; moves the work package), `startDate`, `dueDate`, `scheduleManually`, `percentageDone`, `estimatedTime`, `remainingTime` (ISO duration or hours), `comment`, `clear[]`, `lockVersion`, `notify` | `{id, subject, status, type, assignee, project, parentId, percentageDone, startDate, dueDate, lockVersion, updatedAt, url, retried, commentId? \| comment:{error}?}`; after a move also `moved:{from:{id,identifier?,name},to:{id,identifier?,name}}`; `children:{moved,notMoved,unknown}` (lists of `{id,subject}`) and `childrenNote?` when it has children; `projectNote` when already there. See *Moving a work package* below |
+| `set_status` | `id`, `status` or `statusId`, `percentageDone?`, `comment?`, `lockVersion?`, `notify?` | as `update_work_package`, without the move fields |
+| `validate_update` | same as `update_work_package` (`comment`, `notify` ignored) | `{valid, errors:[{attribute,code?,message}], allowedStatuses:[{id,name}], allowedTypes?:[{id,name}] (a `projectId` whose type is not enabled there), resulting:{startDate,dueDate,derivedStartDate,derivedDueDate}}` — writes nothing |
 | `list_work_packages` | `projectId`, `ids[]`, `parentId`, `assigneeId`, `status` (name/id, `"open"`, `"closed"`, `"all"`), `type`, `search` (full text), `subject` (contains), `sortBy` (`"updatedAt:desc"`), `pageSize` (default 100, max 500), `offset` (page number, 1-based), `fields[]` | `{total, offset, pageSize, hasMore, elements:[{id, ...fields}]}`; default fields `id, subject, status, type, assignee, parentId` |
 | `create_work_package` | `projectId`, `subject`, `description`, `type` (name/id; default the project's first allowed type) or `typeId`, `status`, `priority`, `parentId`, `assigneeId`, `versionId`, `startDate`, `dueDate`, `scheduleManually`, `estimatedTime`, `remainingTime`, `percentageDone`, `notify` | `{id, subject, status, type, project, parentId, lockVersion, updatedAt, url}` |
 | `create_work_packages` | `projectId`, `items[]` (create fields + `parentIndex`), `dedupeBy: "subject"`, `notify` (default false) | `{created:[{index,id}], existing:[{index,id}], failed:[{index,error}]}` — never all-or-nothing. `dedupeBy` searches the project itself (not subprojects) with `subject ~`, then matches the exact subject and parent |
@@ -103,6 +103,18 @@ Rules shared by the named tools (everything below except the upstream `list_proj
 | `log_time` | `workPackageId`, `hours`, `comment`, `spentOn`, `activityId` | `{id, hours, spentOn, workPackageId, comment}` |
 
 `update_work_package` reads `lockVersion` itself. On a 409 it re-reads and retries once, only if none of the fields it writes changed between the two reads (otherwise it fails with code `UPDATE_CONFLICT` and errorIdentifier `urn:openproject-org:api:v3:errors:UpdateConflict`); it never retries when you passed `lockVersion`. On a 422 from a status change it asks OpenProject's form which statuses are allowed and fails with code `INVALID_TRANSITION` and `allowedStatuses: [{id,name}]`. A type the project refuses on create fails with `TYPE_NOT_ALLOWED` and `allowedTypes: [{id,name}]`. These errors keep OpenProject's `errorIdentifier`, `attribute` and message. A `comment` is posted after the PATCH; if only the comment fails, the call still succeeds with `comment: {error}` — do not redo the update.
+
+### Moving a work package
+
+`update_work_package` with `projectId` (id or identifier) moves the work package in the same PATCH as the other fields. The tool does not change the type for you.
+
+- `TYPE_NOT_ENABLED` (with `allowedTypes`): its type is not enabled in the target. Nothing was written.
+- `TYPE_UNKNOWN`: its type could not be read, so it was not checked. Nothing was written.
+- `TYPE_CHANGED`: moved, but OpenProject changed the type. The update was applied; do not repeat it.
+- `MOVE_NOT_APPLIED`: the work package is not in the target afterwards. The update was applied; read it first.
+- `MOVE_UNVERIFIED`: the answer did not show its project or type. The update was applied; read it first.
+
+After a move, `children` lists each child as `{id, subject}`: `moved` (now in the target), `notMoved` (in another project) and `unknown` (could not be read, or past the first 50). Already in the target: the project is left alone and `projectNote` says so.
 
 ### Comments
 

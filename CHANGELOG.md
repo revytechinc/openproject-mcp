@@ -1,5 +1,34 @@
 # Changelog
 
+## 2.1.0
+
+- `update_work_package` takes `projectId` (id or identifier) and moves the
+  work package to that project in the same PATCH (with `lockVersion`). The
+  work package's type must be enabled in the target project: otherwise the
+  move is refused before anything is written, with code `TYPE_NOT_ENABLED`
+  and `allowedTypes`, or `TYPE_UNKNOWN` when the type cannot be read. The tool does not
+  change the type for you. If OpenProject changes it anyway the call fails with
+  `TYPE_CHANGED`, if the work package is not in the target afterwards
+  with `MOVE_NOT_APPLIED`, and if the answer does not show its project or
+  type with `MOVE_UNVERIFIED`; each of these three says the update was applied, so
+  do not repeat it. A 409 is retried once only if neither the fields being
+  written nor the type changed meanwhile.
+- The result of a move adds `moved: {from, to}` (each
+  `{id, identifier?, name}`) and, when the work package
+  has children, `children: {moved, notMoved, unknown}` (lists of
+  `{id, subject}`) read back from OpenProject, at most 50; the rest, and any
+  child that cannot be read, are `unknown`. `childrenNote` names the
+  children that are not in the target (with the `projectId` to pass), the
+  ones that could not be read and the ones not checked. A move to the
+  project it is already in leaves the project alone (other fields in the
+  same call are still written) and returns `projectNote`.
+- `parentId: null` removes the parent, the same as `clear: ["parentId"]`
+  (the schema stays `number`, so `clear` is the way for clients that
+  validate). Every other `null` argument is still ignored.
+- `validate_update` takes the same `projectId`; a type that is not enabled
+  in the target comes back as `valid: false` with an error on `type`
+  (carrying its `code`) and `allowedTypes`.
+
 ## 2.0.0
 
 ### New tools

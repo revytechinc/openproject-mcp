@@ -1,6 +1,6 @@
 {
     "name": "openproject-mcp",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "MCP server for OpenProject API integration, including CloudBSD status.cloudbsd.org write tools and work-package status admin",
     "type": "module",
     "main": "index.js",
