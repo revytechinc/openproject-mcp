@@ -186,17 +186,19 @@ function createOpenProjectMock(state) {
     if (method === "GET" && path === "/api/v3/work_packages/schemas/3-4") {
       return SCHEMA;
     }
-    if (method === "GET" && path.startsWith("/api/v3/work_packages/") && path.endsWith("/relations")) {
-      const fromId = path.split("/")[4];
-      return {
-        _embedded: {
-          elements: state.relations.filter((item) => {
-            const from = item._links.from.href.split("/").pop();
-            const to = item._links.to.href.split("/").pop();
-            return from === String(fromId) || to === String(fromId);
-          }),
-        },
-      };
+    if (method === "GET" && path === "/api/v3/relations") {
+      // `path` is the endpoint with the query stripped; the filter lives on
+      // `endpoint` (the full request URL passed to this mock).
+      const query = new URL(endpoint, "https://op.example.invalid").searchParams;
+      const filters = JSON.parse(query.get("filters") || "[]");
+      const involved = (filters.find((filter) => filter.involved) || {}).involved || {};
+      const workPackageId = (involved.values || [])[0];
+      const elements = state.relations.filter((item) => {
+        const from = item._links.from.href.split("/").pop();
+        const to = item._links.to.href.split("/").pop();
+        return from === String(workPackageId) || to === String(workPackageId);
+      });
+      return { total: elements.length, _embedded: { elements } };
     }
     if (method === "GET" && path.startsWith("/api/v3/work_packages/")) {
       const id = path.split("/").pop();

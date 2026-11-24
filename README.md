@@ -4,7 +4,7 @@ Model Context Protocol (MCP) server for OpenProject API integration. Enables AI 
 
 This CloudBSD fork adds first-class write tools for [status.cloudbsd.org](https://status.cloudbsd.org) against OpenProject API v3.
 
-Version 2.1.0 adds moving a work package to another project (`projectId` on `update_work_package`). Version 2.0.0 changed result and error shapes; see [CHANGELOG.md](CHANGELOG.md) for the breaking changes.
+Version 2.1.1 fixes `list_relations` and `relation_upsert` against OpenProject 17.7.2; see [CHANGELOG.md](CHANGELOG.md). Version 2.1.0 adds moving a work package to another project (`projectId` on `update_work_package`). Version 2.0.0 changed result and error shapes; see [CHANGELOG.md](CHANGELOG.md) for the breaking changes.
 
 ## Installation
 
@@ -134,6 +134,15 @@ After a move, `children` lists each child as `{id, subject}`: `moved` (now in th
 | `list_watchers` | `id` | `[{id, name}]` |
 | `add_watcher` | `id`, `userId` (id or `"me"`) | `{workPackageId, watcher:{id,name}}` |
 | `list_time_entries` | `id` | `{total, count, hasMore, elements:[{id, hours, spentOn, user, activity, comment}]}` |
+
+On OpenProject 17.7.2, `GET /api/v3/work_packages/:id/relations` is a 308 to
+`/api/v3/relations?filters=[{"involved":{"operator":"=","values":["<id>"]}}]`.
+`list_relations` and the lookup used by `relation_upsert` GET that collection
+instead (every page, capped at 50 pages, about 5000 relations at pageSize 100).
+Creating a relation still POSTs to `/api/v3/work_packages/:id/relations`
+(unit-tested; the live probe does not POST). If the collection cannot be fully
+read, the tools fail with `RELATIONS_INCOMPLETE`, nothing is written, and you
+should inspect the work package in OpenProject.
 
 ### Projects and reference data
 
