@@ -412,7 +412,7 @@ test("relations, watchers and time entries are compact; delete_relation needs co
   const { request, calls } = fakeApi([
     {
       method: "GET",
-      path: "/api/v3/work_packages/1677/relations",
+      path: "/api/v3/relations",
       reply: collection([
         { id: 30, type: "blocks", description: null, _links: { from: { href: "/api/v3/work_packages/1677", title: "MCP tools" }, to: { href: "/api/v3/work_packages/1680", title: "Other" } } },
       ]),
@@ -431,6 +431,10 @@ test("relations, watchers and time entries are compact; delete_relation needs co
   assert.deepEqual(await related("list_relations", { id: 1677 }, request), [
     { id: 30, type: "blocks", from: { id: 1677, name: "MCP tools" }, to: { id: 1680, name: "Other" }, description: null },
   ]);
+  const listed = calls.find((c) => c.method === "GET" && String(c.path).startsWith("/api/v3/relations"));
+  assert.ok(listed, "list_relations must GET /api/v3/relations");
+  const listedFilters = JSON.parse(new URL(listed.path, "https://op.example.invalid").searchParams.get("filters") || "[]");
+  assert.deepEqual(listedFilters, [{ involved: { operator: "=", values: ["1677"] } }]);
   await assert.rejects(() => related("delete_relation", { relationId: 30 }, request), /confirm: true/);
   assert.equal(calls.some((c) => c.method === "DELETE"), false);
   assert.deepEqual(await related("delete_relation", { relationId: 30, confirm: true }, request), { deleted: true, relationId: 30 });

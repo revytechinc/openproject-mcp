@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.1.1
+
+- On OpenProject 17.7.2, `list_relations` and `relation_upsert` failed with
+  `REDIRECT_REFUSED`: `GET /api/v3/work_packages/:id/relations` is a 308, and
+  this server refuses to follow redirects so the Bearer is never sent onward.
+  They now GET `/api/v3/relations?filters=[{"involved":{"operator":"=","values":["<id>"]}}]`
+  and walk every page, so listing works again. Creating a relation still
+  POSTs to `/api/v3/work_packages/:id/relations` (unit-tested; POST
+  `/api/v3/relations` is 404 on this OpenProject 17.7.2 instance). The live probe script
+  does not POST, so it does not itself prove the create path.
+  `scripts/check-relations-endpoints.sh` probes the same first-page
+  collection URL the MCP builds. An incomplete collection (a repeated or
+  empty page before the collection is complete, or the `MAX_RELATION_PAGES`
+  cap) fails with `RELATIONS_INCOMPLETE` and nothing is written.
+  A portable repository Makefile provides `make test` and `make preflight`.
+
+
 ## 2.1.0
 
 - `update_work_package` takes `projectId` (id or identifier) and moves the
